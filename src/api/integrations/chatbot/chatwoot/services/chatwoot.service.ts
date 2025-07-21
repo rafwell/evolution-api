@@ -303,6 +303,13 @@ export class ChatwootService {
         return null;
       }
 
+      // Check if contact already exists by phone_number before trying to create
+      const existingContactByPhone = await this.findContact(instance, phoneNumber);
+      if (existingContactByPhone) {
+        this.logger.verbose(`Contact already exists with phone_number: ${phoneNumber}`);
+        return existingContactByPhone;
+      }
+
       let data: any = {};
       if (!isGroup) {
         data = {
@@ -445,10 +452,12 @@ export class ChatwootService {
       });
     }
 
-    if (!contact && contact?.payload?.length === 0) {
-      this.logger.warn('contact not found');
+    if (!contact || contact?.payload?.length === 0) {
+      this.logger.warn(`contact not found for query: ${query}`);
       return null;
     }
+
+    this.logger.verbose(`Found ${contact.payload.length} contacts for query: ${query}`);
 
     if (!isGroup) {
       return contact.payload.length > 1 ? this.findContactInContactList(contact.payload, query) : contact.payload[0];
@@ -497,6 +506,10 @@ export class ChatwootService {
     const phoneNumbers = this.getNumbers(query);
     const searchableFields = this.getSearchableFields();
 
+    this.logger.verbose(`Searching in ${contacts.length} contacts for query: ${query}`);
+    this.logger.verbose(`Phone numbers to search: ${JSON.stringify(phoneNumbers)}`);
+    this.logger.verbose(`Searchable fields: ${JSON.stringify(searchableFields)}`);
+
     // eslint-disable-next-line prettier/prettier
     if (contacts.length === 2 && this.getClientCwConfig().mergeBrazilContacts && query.startsWith('+55')) {
       const contact = this.mergeBrazilianContacts(contacts);
@@ -510,19 +523,24 @@ export class ChatwootService {
       '',
     );
 
+    // Try to find by exact phone_number
     const contact_with9 = contacts.find((contact) => contact.phone_number === phone);
     if (contact_with9) {
+      this.logger.verbose(`Found contact by exact phone_number: ${contact_with9.phone_number}`);
       return contact_with9;
     }
 
+    // Try to find by any searchable field
     for (const contact of contacts) {
       for (const field of searchableFields) {
         if (contact[field] && phoneNumbers.includes(contact[field])) {
+          this.logger.verbose(`Found contact by field ${field}: ${contact[field]}`);
           return contact;
         }
       }
     }
 
+    this.logger.verbose(`No matching contact found in contact list`);
     return null;
   }
 
@@ -2580,4 +2598,6 @@ export class ChatwootService {
       return;
     }
   }
+
+
 }
