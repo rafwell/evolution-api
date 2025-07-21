@@ -355,8 +355,8 @@ export class ChatwootService {
       if (error?.body?.message === 'Identifier has already been taken') {
         this.logger.warn(`Identifier conflict for phone: ${phoneNumber}, jid: ${jid}`);
         
-        // Try to find the existing contact using multiple criteria
-        const existingContact = await this.findContactByMultipleCriteria(instance, phoneNumber, jid);
+        // Try to find the existing contact using comprehensive search
+        const existingContact = await this.searchContactByMultipleFormats(instance, phoneNumber, jid);
         if (existingContact) {
           this.logger.verbose(`Found existing contact after identifier conflict`);
           return existingContact;
@@ -431,6 +431,65 @@ export class ChatwootService {
     }
   }
 
+  private async searchContactByMultipleFormats(instance: InstanceDto, phoneNumber: string, jid?: string) {
+    const client = await this.clientCw(instance);
+    if (!client) return null;
+
+    const searchQueries = [];
+    
+    // Add phone number with + prefix
+    searchQueries.push(`+${phoneNumber}`);
+    
+    // Add phone number without + prefix
+    searchQueries.push(phoneNumber);
+    
+    // Add jid if provided
+    if (jid) {
+      searchQueries.push(jid);
+    }
+    
+    // Add constructed jid if phone number doesn't have @
+    if (!phoneNumber.includes('@')) {
+      searchQueries.push(`${phoneNumber}@s.whatsapp.net`);
+    }
+
+    // Try each search query
+    for (const query of searchQueries) {
+      try {
+        this.logger.verbose(`Trying search query: ${query}`);
+        
+        const searchResult = await client.contacts.search({
+          accountId: this.provider.accountId,
+          q: query,
+        });
+        
+        if (searchResult?.payload?.length > 0) {
+          // Try to find exact match first
+          const exactMatch = searchResult.payload.find((contact: any) => 
+            contact.identifier === query || 
+            contact.phone_number === query ||
+            contact.phone_number === `+${phoneNumber}` ||
+            contact.identifier === phoneNumber ||
+            contact.identifier === jid
+          );
+          
+          if (exactMatch) {
+            this.logger.verbose(`Found exact match with query: ${query}`);
+            return exactMatch;
+          }
+          
+          // If no exact match, return first result
+          this.logger.verbose(`Returning first result for query: ${query}`);
+          return searchResult.payload[0];
+        }
+      } catch (searchError) {
+        this.logger.verbose(`Search failed for query ${query}: ${searchError.message}`);
+      }
+    }
+
+    return null;
+  }
+
   private async findContactByMultipleCriteria(instance: InstanceDto, phoneNumber: string, jid?: string) {
     const client = await this.clientCw(instance);
 
@@ -441,54 +500,17 @@ export class ChatwootService {
 
     const isGroup = phoneNumber.includes('@g.us');
     
-    // Try to find by phone number first
+    // Try to find by phone number first using the original method
     const contactByPhone = await this.findContact(instance, phoneNumber);
     if (contactByPhone) {
       return contactByPhone;
     }
 
-    // If not found and jid is provided, try to find by identifier
-    if (jid && !isGroup) {
-      try {
-        this.logger.verbose(`Trying search by identifier: ${jid}`);
-        
-        const identifierContact = await client.contacts.search({
-          accountId: this.provider.accountId,
-          q: jid,
-        });
-        
-        if (identifierContact?.payload?.length > 0) {
-          const foundContact = identifierContact.payload.find((contact: any) => contact.identifier === jid);
-          if (foundContact) {
-            this.logger.verbose(`Found contact by identifier: ${jid}`);
-            return foundContact;
-          }
-        }
-      } catch (searchError) {
-        this.logger.verbose(`Search by identifier failed: ${searchError.message}`);
-      }
-    }
-
-    // If still not found and it's a phone number without @, try with @s.whatsapp.net
-    if (!isGroup && !phoneNumber.includes('@')) {
-      try {
-        const identifierQuery = `${phoneNumber}@s.whatsapp.net`;
-        this.logger.verbose(`Trying search by constructed identifier: ${identifierQuery}`);
-        
-        const identifierContact = await client.contacts.search({
-          accountId: this.provider.accountId,
-          q: identifierQuery,
-        });
-        
-        if (identifierContact?.payload?.length > 0) {
-          const foundContact = identifierContact.payload.find((contact: any) => contact.identifier === identifierQuery);
-          if (foundContact) {
-            this.logger.verbose(`Found contact by constructed identifier: ${identifierQuery}`);
-            return foundContact;
-          }
-        }
-      } catch (searchError) {
-        this.logger.verbose(`Search by constructed identifier failed: ${searchError.message}`);
+    // If not found, try the comprehensive search method
+    if (!isGroup) {
+      const comprehensiveResult = await this.searchContactByMultipleFormats(instance, phoneNumber, jid);
+      if (comprehensiveResult) {
+        return comprehensiveResult;
       }
     }
 
