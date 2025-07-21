@@ -303,11 +303,11 @@ export class ChatwootService {
         return null;
       }
 
-      // Check if contact already exists by phone_number before trying to create
-      const existingContactByPhone = await this.findContact(instance, phoneNumber);
-      if (existingContactByPhone) {
-        this.logger.verbose(`Contact already exists with phone_number: ${phoneNumber}`);
-        return existingContactByPhone;
+      // Check if contact already exists using multiple criteria
+      const existingContact = await this.findContactByMultipleCriteria(instance, phoneNumber, jid);
+      if (existingContact) {
+        this.logger.verbose(`Contact already exists for phone: ${phoneNumber}, jid: ${jid}`);
+        return existingContact;
       }
 
       let data: any = {};
@@ -350,6 +350,19 @@ export class ChatwootService {
       return contact;
     } catch (error) {
       this.logger.error('Error creating contact');
+      
+      // Check if it's an identifier conflict error
+      if (error?.body?.message === 'Identifier has already been taken') {
+        this.logger.warn(`Identifier conflict for phone: ${phoneNumber}, jid: ${jid}`);
+        
+        // Try to find the existing contact using multiple criteria
+        const existingContact = await this.findContactByMultipleCriteria(instance, phoneNumber, jid);
+        if (existingContact) {
+          this.logger.verbose(`Found existing contact after identifier conflict`);
+          return existingContact;
+        }
+      }
+      
       console.log(error);
       return null;
     }
@@ -418,6 +431,70 @@ export class ChatwootService {
     }
   }
 
+  private async findContactByMultipleCriteria(instance: InstanceDto, phoneNumber: string, jid?: string) {
+    const client = await this.clientCw(instance);
+
+    if (!client) {
+      this.logger.warn('client not found');
+      return null;
+    }
+
+    const isGroup = phoneNumber.includes('@g.us');
+    
+    // Try to find by phone number first
+    const contactByPhone = await this.findContact(instance, phoneNumber);
+    if (contactByPhone) {
+      return contactByPhone;
+    }
+
+    // If not found and jid is provided, try to find by identifier
+    if (jid && !isGroup) {
+      try {
+        this.logger.verbose(`Trying search by identifier: ${jid}`);
+        
+        const identifierContact = await client.contacts.search({
+          accountId: this.provider.accountId,
+          q: jid,
+        });
+        
+        if (identifierContact?.payload?.length > 0) {
+          const foundContact = identifierContact.payload.find(contact => contact.identifier === jid);
+          if (foundContact) {
+            this.logger.verbose(`Found contact by identifier: ${jid}`);
+            return foundContact;
+          }
+        }
+      } catch (searchError) {
+        this.logger.verbose(`Search by identifier failed: ${searchError.message}`);
+      }
+    }
+
+    // If still not found and it's a phone number without @, try with @s.whatsapp.net
+    if (!isGroup && !phoneNumber.includes('@')) {
+      try {
+        const identifierQuery = `${phoneNumber}@s.whatsapp.net`;
+        this.logger.verbose(`Trying search by constructed identifier: ${identifierQuery}`);
+        
+        const identifierContact = await client.contacts.search({
+          accountId: this.provider.accountId,
+          q: identifierQuery,
+        });
+        
+        if (identifierContact?.payload?.length > 0) {
+          const foundContact = identifierContact.payload.find(contact => contact.identifier === identifierQuery);
+          if (foundContact) {
+            this.logger.verbose(`Found contact by constructed identifier: ${identifierQuery}`);
+            return foundContact;
+          }
+        }
+      } catch (searchError) {
+        this.logger.verbose(`Search by constructed identifier failed: ${searchError.message}`);
+      }
+    }
+
+    return null;
+  }
+
   public async findContact(instance: InstanceDto, phoneNumber: string) {
     const client = await this.clientCw(instance);
 
@@ -454,6 +531,30 @@ export class ChatwootService {
 
     if (!contact || contact?.payload?.length === 0) {
       this.logger.warn(`contact not found for query: ${query}`);
+      
+      // Try additional search by identifier if it's a phone number without @
+      if (!isGroup && !phoneNumber.includes('@')) {
+        try {
+          const identifierQuery = `${phoneNumber}@s.whatsapp.net`;
+          this.logger.verbose(`Trying search by identifier: ${identifierQuery}`);
+          
+          const identifierContact = await client.contacts.search({
+            accountId: this.provider.accountId,
+            q: identifierQuery,
+          });
+          
+          if (identifierContact?.payload?.length > 0) {
+            const foundContact = identifierContact.payload.find(contact => contact.identifier === identifierQuery);
+            if (foundContact) {
+              this.logger.verbose(`Found contact by identifier: ${identifierQuery}`);
+              return foundContact;
+            }
+          }
+        } catch (searchError) {
+          this.logger.verbose(`Search by identifier failed: ${searchError.message}`);
+        }
+      }
+      
       return null;
     }
 
@@ -601,7 +702,7 @@ export class ChatwootService {
     try {
       // Processa atualização de contatos já criados @lid
       if (isLid && body.key.senderPn !== body.key.previousRemoteJid) {
-        const contact = await this.findContact(instance, body.key.remoteJid.split('@')[0]);
+        const contact = await this.findContactByMultipleCriteria(instance, body.key.remoteJid.split('@')[0], body.key.remoteJid);
         if (contact && contact.identifier !== body.key.senderPn) {
           this.logger.verbose(
             `Identifier needs update: (contact.identifier: ${contact.identifier}, body.key.remoteJid: ${body.key.remoteJid}, body.key.senderPn: ${body.key.senderPn}`,
@@ -612,7 +713,7 @@ export class ChatwootService {
           });
 
           if (updateContact === null) {
-            const baseContact = await this.findContact(instance, body.key.senderPn.split('@')[0]);
+            const baseContact = await this.findContactByMultipleCriteria(instance, body.key.senderPn.split('@')[0], body.key.senderPn);
             if (baseContact) {
               await this.mergeContacts(baseContact.id, contact.id);
               this.logger.verbose(
@@ -684,7 +785,7 @@ export class ChatwootService {
           );
           this.logger.verbose(`Participant profile picture URL: ${JSON.stringify(picture_url)}`);
 
-          const findParticipant = await this.findContact(instance, body.key.participant.split('@')[0]);
+          const findParticipant = await this.findContactByMultipleCriteria(instance, body.key.participant.split('@')[0], body.key.participant);
           this.logger.verbose(`Found participant: ${JSON.stringify(findParticipant)}`);
 
           if (findParticipant) {
@@ -710,7 +811,7 @@ export class ChatwootService {
         const picture_url = await this.waMonitor.waInstances[instance.instanceName].profilePicture(chatId);
         this.logger.verbose(`Contact profile picture URL: ${JSON.stringify(picture_url)}`);
 
-        let contact = await this.findContact(instance, chatId);
+        let contact = await this.findContactByMultipleCriteria(instance, chatId, remoteJid);
 
         if (contact) {
           this.logger.verbose(`Found contact: ${JSON.stringify(contact)}`);
