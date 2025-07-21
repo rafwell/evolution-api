@@ -458,7 +458,7 @@ export class ChatwootService {
         });
         
         if (identifierContact?.payload?.length > 0) {
-          const foundContact = identifierContact.payload.find(contact => contact.identifier === jid);
+          const foundContact = identifierContact.payload.find((contact: any) => contact.identifier === jid);
           if (foundContact) {
             this.logger.verbose(`Found contact by identifier: ${jid}`);
             return foundContact;
@@ -481,7 +481,7 @@ export class ChatwootService {
         });
         
         if (identifierContact?.payload?.length > 0) {
-          const foundContact = identifierContact.payload.find(contact => contact.identifier === identifierQuery);
+          const foundContact = identifierContact.payload.find((contact: any) => contact.identifier === identifierQuery);
           if (foundContact) {
             this.logger.verbose(`Found contact by constructed identifier: ${identifierQuery}`);
             return foundContact;
@@ -544,7 +544,7 @@ export class ChatwootService {
           });
           
           if (identifierContact?.payload?.length > 0) {
-            const foundContact = identifierContact.payload.find(contact => contact.identifier === identifierQuery);
+            const foundContact = identifierContact.payload.find((contact: any) => contact.identifier === identifierQuery);
             if (foundContact) {
               this.logger.verbose(`Found contact by identifier: ${identifierQuery}`);
               return foundContact;
@@ -563,7 +563,7 @@ export class ChatwootService {
     if (!isGroup) {
       return contact.payload.length > 1 ? this.findContactInContactList(contact.payload, query) : contact.payload[0];
     } else {
-      return contact.payload.find((contact) => contact.identifier === query);
+      return contact.payload.find((contact: any) => contact.identifier === query);
     }
   }
 
@@ -703,9 +703,9 @@ export class ChatwootService {
       // Processa atualização de contatos já criados @lid
       if (isLid && body.key.senderPn !== body.key.previousRemoteJid) {
         const contact = await this.findContactByMultipleCriteria(instance, body.key.remoteJid.split('@')[0], body.key.remoteJid);
-        if (contact && contact.identifier !== body.key.senderPn) {
+        if (contact && (contact as any).identifier !== body.key.senderPn) {
           this.logger.verbose(
-            `Identifier needs update: (contact.identifier: ${contact.identifier}, body.key.remoteJid: ${body.key.remoteJid}, body.key.senderPn: ${body.key.senderPn}`,
+            `Identifier needs update: (contact.identifier: ${(contact as any).identifier}, body.key.remoteJid: ${body.key.remoteJid}, body.key.senderPn: ${body.key.senderPn}`,
           );
           const updateContact = await this.updateContact(instance, contact.id, {
             identifier: body.key.senderPn,
@@ -2635,7 +2635,7 @@ export class ChatwootService {
       );
 
       const contactIdentifiers = recentContacts
-        .map((contact) => contact.identifier)
+        .map((contact: any) => contact.identifier)
         .filter((identifier) => identifier !== null);
 
       const contactsWithProfilePicture = (
@@ -2652,7 +2652,7 @@ export class ChatwootService {
         })
       ).reduce((acc: Map<string, ContactModel>, contact: ContactModel) => acc.set(contact.id, contact), new Map());
 
-      recentContacts.forEach(async (contact) => {
+      recentContacts.forEach(async (contact: any) => {
         if (contactsWithProfilePicture.has(contact.identifier)) {
           client.contacts.update({
             accountId: this.provider.accountId,
