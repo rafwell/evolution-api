@@ -216,7 +216,9 @@ class ChatwootImport {
       let totalMessagesImported = 0;
 
       let messagesOrdered = this.historyMessages.get(instance.instanceName) || [];
+      this.logger.log(`Starting import with ${messagesOrdered.length} messages in history`);
       if (messagesOrdered.length === 0) {
+        this.logger.warn('No messages in history to import');
         return 0;
       }
 
@@ -247,7 +249,9 @@ class ChatwootImport {
       });
 
       const existingSourceIds = await this.getExistingSourceIds(messagesOrdered.map((message: any) => message.key.id));
+      this.logger.log(`Found ${existingSourceIds.size} existing source IDs in Chatwoot`);
       messagesOrdered = messagesOrdered.filter((message: any) => !existingSourceIds.has(message.key.id));
+      this.logger.log(`After filtering existing messages: ${messagesOrdered.length} messages remaining`);
       // processing messages in batch
       const batchSize = 4000;
       let messagesChunk: Message[] = this.sliceIntoChunks(messagesOrdered, batchSize);
@@ -256,18 +260,22 @@ class ChatwootImport {
         const messagesByPhoneNumber = this.createMessagesMapByPhoneNumber(messagesChunk);
 
         if (messagesByPhoneNumber.size > 0) {
+          this.logger.log(`Processing ${messagesByPhoneNumber.size} phone numbers in batch`);
           const fksByNumber = await this.selectOrCreateFksFromChatwoot(
             provider,
             inbox,
             phoneNumbersWithTimestamp,
             messagesByPhoneNumber,
           );
+          this.logger.log(`Created/selected FKs for ${fksByNumber.size} phone numbers`);
 
           // inserting messages in chatwoot db
           let sqlInsertMsg = `INSERT INTO messages
             (content, processed_message_content, account_id, inbox_id, conversation_id, message_type, private, content_type,
             sender_type, sender_id, source_id, created_at, updated_at) VALUES `;
           const bindInsertMsg = [provider.accountId, inbox.id];
+          
+          let messagesToInsert = 0;
 
           messagesByPhoneNumber.forEach((messages: any[], phoneNumber: string) => {
             const fksChatwoot = fksByNumber.get(phoneNumber);
@@ -278,11 +286,13 @@ class ChatwootImport {
               }
 
               if (!fksChatwoot?.conversation_id || !fksChatwoot?.contact_id) {
+                this.logger.warn(`Missing FKs for phone ${phoneNumber}: conversation_id=${fksChatwoot?.conversation_id}, contact_id=${fksChatwoot?.contact_id}`);
                 return;
               }
 
               const contentMessage = this.getContentMessage(chatwootService, message);
               if (!contentMessage) {
+                this.logger.warn(`No content message for message ID: ${message.key.id}`);
                 return;
               }
 
@@ -297,6 +307,8 @@ class ChatwootImport {
 
               bindInsertMsg.push(message.key.fromMe ? chatwootUser.user_type : 'Contact');
               const bindSenderType = `$${bindInsertMsg.length}`;
+              
+              messagesToInsert++;
 
               bindInsertMsg.push(message.key.fromMe ? chatwootUser.user_id : fksChatwoot.contact_id);
               const bindSenderId = `$${bindInsertMsg.length}`;
@@ -311,11 +323,19 @@ class ChatwootImport {
                   ${bindSenderType},${bindSenderId},${bindSourceId}, to_timestamp(${bindmessageTimestamp}), to_timestamp(${bindmessageTimestamp})),`;
             });
           });
+          
+          this.logger.log(`Prepared ${messagesToInsert} messages for insertion in this batch`);
+          
           if (bindInsertMsg.length > 2) {
             if (sqlInsertMsg.slice(-1) === ',') {
               sqlInsertMsg = sqlInsertMsg.slice(0, -1);
             }
-            totalMessagesImported += (await pgClient.query(sqlInsertMsg, bindInsertMsg))?.rowCount ?? 0;
+            const result = await pgClient.query(sqlInsertMsg, bindInsertMsg);
+            const insertedCount = result?.rowCount ?? 0;
+            totalMessagesImported += insertedCount;
+            this.logger.log(`Successfully inserted ${insertedCount} messages. Total imported: ${totalMessagesImported}`);
+          } else {
+            this.logger.warn('No messages to insert in this batch');
           }
         }
         messagesChunk = this.sliceIntoChunks(messagesOrdered, batchSize);

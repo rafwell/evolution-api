@@ -2689,6 +2689,7 @@ export class ChatwootService {
       const messagesRaw: any[] = [];
       for (const m of filteredMessages) {
         if (!m.message || !m.key || !m.messageTimestamp) {
+          this.logger.warn(`Skipping message due to missing required fields: message=${!!m.message}, key=${!!m.key}, timestamp=${!!m.messageTimestamp}`);
           continue;
         }
 
@@ -2712,10 +2713,17 @@ export class ChatwootService {
         messagesRaw.push(preparedMessage);
       }
 
+      this.logger.log(`Prepared ${messagesRaw.length} messages for import`);
+
+      const filteredMessagesForImport = messagesRaw.filter((msg) => !chatwootImport.isIgnorePhoneNumber(msg.key?.remoteJid));
+      this.logger.log(`After filtering ignored numbers: ${filteredMessagesForImport.length} messages`);
+
       this.addHistoryMessages(
         instance,
-        messagesRaw.filter((msg) => !chatwootImport.isIgnorePhoneNumber(msg.key?.remoteJid)),
+        filteredMessagesForImport,
       );
+
+      this.logger.log(`Added messages to history. Total in history: ${chatwootImport.getHistoryMessagesLenght(instance)}`);
 
       const totalMessagesImported = await chatwootImport.importHistoryMessages(instance, this, inbox, chatwootModel);
       
