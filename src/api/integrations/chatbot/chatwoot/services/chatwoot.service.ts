@@ -2632,6 +2632,9 @@ export class ChatwootService {
         return { success: false, message: 'Chatwoot is not configured or enabled' };
       }
 
+      // Set the provider for this instance to ensure it's available for chatwootImport
+      this.provider = chatwootConfig;
+
       const inbox = await this.getInbox(instance);
       if (!inbox) {
         this.logger.warn('Inbox not found for this instance.');
@@ -2670,6 +2673,12 @@ export class ChatwootService {
         return { success: true, message: 'No lost messages found', count: 0 };
       }
 
+      this.logger.log(`Provider config: ${JSON.stringify({
+        accountId: chatwootConfig.accountId,
+        token: chatwootConfig.token ? '***' : 'undefined',
+        url: chatwootConfig.url
+      })}`);
+
       const messagesRaw: any[] = [];
       for (const m of filteredMessages) {
         if (!m.message || !m.key || !m.messageTimestamp) {
@@ -2701,7 +2710,7 @@ export class ChatwootService {
         messagesRaw.filter((msg) => !chatwootImport.isIgnorePhoneNumber(msg.key?.remoteJid)),
       );
 
-      const totalMessagesImported = await chatwootImport.importHistoryMessages(instance, this, inbox, this.provider);
+      const totalMessagesImported = await chatwootImport.importHistoryMessages(instance, this, inbox, chatwootConfig);
       
       // Clear Chatwoot cache
       const waInstance = this.waMonitor.waInstances[instance.instanceName];
