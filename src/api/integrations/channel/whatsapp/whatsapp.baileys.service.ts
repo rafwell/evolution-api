@@ -618,8 +618,8 @@ export class BaileysStartupService extends ChannelStartupService {
       retryRequestDelayMs: 350,
       maxMsgRetryCount: 4,
       fireInitQueries: true,
-      connectTimeoutMs: 30_000,
-      keepAliveIntervalMs: 30_000,
+      connectTimeoutMs: 60_000,
+      keepAliveIntervalMs: 15_000,
       qrTimeout: 45_000,
       emitOwnEvents: false,
       shouldIgnoreJid: (jid) => {
@@ -1059,10 +1059,26 @@ export class BaileysStartupService extends ChannelStartupService {
                 'failed to decrypt message',
                 'SessionError',
                 'Invalid PreKey ID',
+                'Closing stale open session for new outgoing prekey bundle',
               ].some((err) => param?.includes?.(err)),
             )
           ) {
             this.logger.warn(`Message ignored with messageStubParameters: ${JSON.stringify(received, null, 2)}`);
+            
+            // Tentar reestabelecer sessão se for um erro de sessão stale
+            if (received?.messageStubParameters?.some?.((param) => 
+              param?.includes?.('Closing stale open session for new outgoing prekey bundle')
+            )) {
+              this.logger.info('Detected stale session, attempting to reestablish connection...');
+              try {
+                // Forçar renovação da sessão
+                await this.client.requestPlaceholderResend(received.key);
+                this.logger.info('Session reestablishment requested successfully');
+              } catch (error) {
+                this.logger.error('Failed to reestablish session:', error);
+              }
+            }
+            
             continue;
           }
           if (received.message?.conversation || received.message?.extendedTextMessage?.text) {
