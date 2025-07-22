@@ -482,6 +482,36 @@ export class BaileysStartupService extends ChannelStartupService {
     }
   }
 
+  private async handleStaleSession(key: proto.IMessageKey) {
+    try {
+      this.logger.info(`Handling stale session for key: ${key.id}`);
+      
+      // Tentar reestabelecer a sessão usando requestPlaceholderResend
+      await this.client.requestPlaceholderResend(key);
+      this.logger.info('Session reestablishment requested successfully');
+      
+      // Aguardar um pouco para a sessão ser reestabelecida
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Verificar se a conexão ainda está ativa
+      if (this.stateConnection.state !== 'open') {
+        this.logger.warn('Connection not open after session reestablishment, attempting reconnect...');
+        await this.reloadConnection();
+      }
+      
+    } catch (error) {
+      this.logger.error(`Error handling stale session: ${error}`);
+      
+      // Se falhar, tentar reconectar completamente
+      try {
+        this.logger.info('Attempting full reconnection due to stale session...');
+        await this.reloadConnection();
+      } catch (reconnectError) {
+        this.logger.error(`Failed to reconnect after stale session: ${reconnectError}`);
+      }
+    }
+  }
+
   private async getMessage(key: proto.IMessageKey, full = false) {
     try {
       const webMessageInfo = (await this.prismaRepository.message.findMany({
@@ -615,12 +645,12 @@ export class BaileysStartupService extends ChannelStartupService {
       getMessage: async (key) => (await this.getMessage(key)) as Promise<proto.IMessage>,
       ...browserOptions,
       markOnlineOnConnect: this.localSettings.alwaysOnline,
-      retryRequestDelayMs: 350,
-      maxMsgRetryCount: 4,
+      retryRequestDelayMs: 500,        // Aumentado para reduzir pressão na conexão
+      maxMsgRetryCount: 3,             // Reduzido para evitar loops infinitos
       fireInitQueries: true,
-      connectTimeoutMs: 60_000,
-      keepAliveIntervalMs: 15_000,
-      qrTimeout: 45_000,
+      connectTimeoutMs: 90_000,        // Aumentado para 90 segundos
+      keepAliveIntervalMs: 10_000,     // Reduzido para 10 segundos (mais frequente)
+      qrTimeout: 60_000,               // Aumentado para 60 segundos
       emitOwnEvents: false,
       shouldIgnoreJid: (jid) => {
         if (this.localSettings.syncFullHistory && isJidGroup(jid)) {
@@ -640,6 +670,12 @@ export class BaileysStartupService extends ChannelStartupService {
       cachedGroupMetadata: this.getGroupMetadataCache,
       userDevicesCache: this.userDevicesCache,
       transactionOpts: { maxCommitRetries: 10, delayBetweenTriesMs: 3000 },
+      // Configurações adicionais para melhorar estabilidade
+      maxCachedMessages: 100,
+      // Configurações de sessão para reduzir problemas stale
+      sessionId: this.instance.name,
+      // Configurações de heartbeat para manter conexão ativa
+      heartbeatIntervalMs: 30000,
       patchMessageBeforeSending(message) {
         if (
           message.deviceSentMessage?.message?.listMessage?.listType === proto.Message.ListMessage.ListType.PRODUCT_LIST
@@ -1069,13 +1105,12 @@ export class BaileysStartupService extends ChannelStartupService {
             if (received?.messageStubParameters?.some?.((param) => 
               param?.includes?.('Closing stale open session for new outgoing prekey bundle')
             )) {
-              this.logger.info('Detected stale session, attempting to reestablish connection...');
+              this.logger.warn('Detected stale session error, attempting to handle gracefully...');
               try {
-                // Forçar renovação da sessão
-                await this.client.requestPlaceholderResend(received.key);
-                this.logger.info('Session reestablishment requested successfully');
+                // Tentar reestabelecer a sessão
+                await this.handleStaleSession(received.key);
               } catch (error) {
-                this.logger.error('Failed to reestablish session: '+error);
+                this.logger.error(`Failed to handle stale session: ${error}`);
               }
             }
             
@@ -1093,8 +1128,12 @@ export class BaileysStartupService extends ChannelStartupService {
             }
 
             if (text == 'onDemandHistSync') {
-              const messageId = await this.client.fetchMessageHistory(50, received.key, received.messageTimestamp!);
-              console.log('requested on-demand sync, id=', messageId);
+              try {
+                const messageId = await this.client.fetchMessageHistory(received.key);
+                console.log('requested on-demand sync, id=', messageId);
+              } catch (error) {
+                this.logger.error(`Failed to fetch message history: ${error}`);
+              }
             }
           }
 
