@@ -1129,7 +1129,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
             if (text == 'onDemandHistSync') {
               try {
-                const messageId = await this.client.fetchMessageHistory(received.key);
+                const messageId = await this.client.fetchMessageHistory(50, received.key, received.messageTimestamp!);
                 console.log('requested on-demand sync, id=', messageId);
               } catch (error) {
                 this.logger.error(`Failed to fetch message history: ${error}`);
