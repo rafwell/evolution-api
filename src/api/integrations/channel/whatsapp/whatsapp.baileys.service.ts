@@ -1072,7 +1072,7 @@ export class BaileysStartupService extends ChannelStartupService {
               this.logger.info('Detected stale session, attempting to reestablish connection...');
               try {
                 // Forçar renovação da sessão
-                await this.client.requestPlaceholderResend(received.key);
+                await this.client.requestPlaceholderResend(received.key, 'stale_session_recovery');
                 this.logger.info('Session reestablishment requested successfully');
               } catch (error) {
                 this.logger.error('Failed to reestablish session:', error);
@@ -1085,7 +1085,7 @@ export class BaileysStartupService extends ChannelStartupService {
             const text = received.message?.conversation || received.message?.extendedTextMessage?.text;
 
             if (text == 'requestPlaceholder' && !requestId) {
-              const messageId = await this.client.requestPlaceholderResend(received.key);
+              const messageId = await this.client.requestPlaceholderResend(received.key, 'placeholder_request');
 
               console.log('requested placeholder resync, id=', messageId);
             } else if (requestId) {
