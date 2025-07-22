@@ -89,4 +89,13 @@ export class ChatwootController {
 
     return chatwootService.receiveWebhook(instance, data);
   }
+
+  public async forceSyncLostMessages(instance: InstanceDto) {
+    if (!this.configService.get<Chatwoot>('CHATWOOT').ENABLED) throw new BadRequestException('Chatwoot is disabled');
+
+    const chatwootCache = new CacheService(new CacheEngine(this.configService, ChatwootService.name).getEngine());
+    const chatwootService = new ChatwootService(waMonitor, this.configService, this.prismaRepository, chatwootCache);
+
+    return chatwootService.forceSyncLostMessages(instance);
+  }
 }

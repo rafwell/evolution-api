@@ -2611,4 +2611,118 @@ export class ChatwootService {
       return;
     }
   }
+
+  public async forceSyncLostMessages(instance: InstanceDto) {
+    try {
+      this.logger.log(`Starting forced sync of lost messages for instance: ${instance.instanceName}`);
+      
+      if (!this.isImportHistoryAvailable()) {
+        this.logger.warn('History import is not available. Check Chatwoot database configuration.');
+        return { success: false, message: 'History import is not available' };
+      }
+      
+      if (!this.configService.get<Database>('DATABASE').SAVE_DATA.MESSAGE_UPDATE) {
+        this.logger.warn('MESSAGE_UPDATE is not enabled in database configuration.');
+        return { success: false, message: 'MESSAGE_UPDATE is not enabled' };
+      }
+
+      const chatwootConfig = await this.find(instance);
+      if (!chatwootConfig || !chatwootConfig.enabled) {
+        this.logger.warn('Chatwoot is not configured or enabled for this instance.');
+        return { success: false, message: 'Chatwoot is not configured or enabled' };
+      }
+
+      const inbox = await this.getInbox(instance);
+      if (!inbox) {
+        this.logger.warn('Inbox not found for this instance.');
+        return { success: false, message: 'Inbox not found' };
+      }
+
+      // Search for messages from the last 24 hours in Chatwoot database (increased from 6h to 24h)
+      // Note: This uses direct SQL because it's querying the Chatwoot database, not the Evolution database
+      const sqlMessages = `select * from messages m
+      where account_id = ${chatwootConfig.accountId}
+      and inbox_id = ${inbox.id}
+      and created_at >= now() - interval '24h'
+      order by created_at desc`;
+
+      const messagesData = (await this.pgClient.query(sqlMessages))?.rows;
+      const ids: string[] = messagesData
+        .filter((message) => !!message.source_id)
+        .map((message) => message.source_id.replace('WAID:', ''));
+
+      // Search for messages in Evolution database from the last 24 hours using Prisma
+      const savedMessages = await this.prismaRepository.message.findMany({
+        where: {
+          Instance: { name: instance.instanceName },
+          messageTimestamp: { gte: dayjs().subtract(24, 'hours').unix() },
+          AND: ids.map((id) => ({ key: { path: ['id'], not: id } })),
+        },
+      });
+
+      const filteredMessages = savedMessages.filter(
+        (msg: any) => !chatwootImport.isIgnorePhoneNumber(msg.key?.remoteJid),
+      );
+
+      this.logger.log(`Found ${filteredMessages.length} lost messages to sync`);
+
+      if (filteredMessages.length === 0) {
+        return { success: true, message: 'No lost messages found', count: 0 };
+      }
+
+      const messagesRaw: any[] = [];
+      for (const m of filteredMessages) {
+        if (!m.message || !m.key || !m.messageTimestamp) {
+          continue;
+        }
+
+        if (Long.isLong(m?.messageTimestamp)) {
+          m.messageTimestamp = m.messageTimestamp?.toNumber();
+        }
+
+        // Prepare message using Evolution's standard method
+        const preparedMessage = {
+          key: m.key,
+          message: m.message,
+          messageTimestamp: m.messageTimestamp,
+          pushName: m.pushName,
+          participant: m.participant,
+          messageType: m.messageType,
+          contextInfo: m.contextInfo,
+          source: m.source,
+          instanceId: m.instanceId,
+        };
+
+        messagesRaw.push(preparedMessage);
+      }
+
+      this.addHistoryMessages(
+        instance,
+        messagesRaw.filter((msg) => !chatwootImport.isIgnorePhoneNumber(msg.key?.remoteJid)),
+      );
+
+      const totalMessagesImported = await chatwootImport.importHistoryMessages(instance, this, inbox, this.provider);
+      
+      // Clear Chatwoot cache
+      const waInstance = this.waMonitor.waInstances[instance.instanceName];
+      if (waInstance) {
+        waInstance.clearCacheChatwoot();
+      }
+
+      this.logger.log(`Forced sync completed. ${totalMessagesImported} messages imported.`);
+      
+      return { 
+        success: true, 
+        message: 'Forced sync completed successfully', 
+        count: totalMessagesImported 
+      };
+    } catch (error) {
+      this.logger.error(`Error in forced sync: ${error}`);
+      return { 
+        success: false, 
+        message: `Sync error: ${error.message}`, 
+        count: 0 
+      };
+    }
+  }
 }

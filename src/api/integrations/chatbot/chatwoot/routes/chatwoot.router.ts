@@ -39,6 +39,16 @@ export class ChatwootRouter extends RouterBroker {
         });
 
         res.status(HttpStatus.OK).json(response);
+      })
+      .post(this.routerPath('force-sync'), ...guards, async (req, res) => {
+        const response = await this.dataValidate<InstanceDto>({
+          request: req,
+          schema: instanceSchema,
+          ClassRef: InstanceDto,
+          execute: (instance) => chatwootController.forceSyncLostMessages(instance),
+        });
+
+        res.status(HttpStatus.OK).json(response);
       });
   }
 
