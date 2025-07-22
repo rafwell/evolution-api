@@ -2632,8 +2632,15 @@ export class ChatwootService {
         return { success: false, message: 'Chatwoot is not configured or enabled' };
       }
 
+      // Get the ChatwootModel from Prisma to ensure proper typing
+      const chatwootModel = await this.getProvider(instance);
+      if (!chatwootModel) {
+        this.logger.warn('Chatwoot model not found in database.');
+        return { success: false, message: 'Chatwoot model not found in database' };
+      }
+
       // Set the provider for this instance to ensure it's available for chatwootImport
-      this.provider = chatwootConfig;
+      this.provider = chatwootModel;
 
       const inbox = await this.getInbox(instance);
       if (!inbox) {
@@ -2644,7 +2651,7 @@ export class ChatwootService {
       // Search for messages from the last 24 hours in Chatwoot database (increased from 6h to 24h)
       // Note: This uses direct SQL because it's querying the Chatwoot database, not the Evolution database
       const sqlMessages = `select * from messages m
-      where account_id = ${chatwootConfig.accountId}
+      where account_id = ${chatwootModel.accountId}
       and inbox_id = ${inbox.id}
       and created_at >= now() - interval '24h'
       order by created_at desc`;
@@ -2674,9 +2681,9 @@ export class ChatwootService {
       }
 
       this.logger.log(`Provider config: ${JSON.stringify({
-        accountId: chatwootConfig.accountId,
-        token: chatwootConfig.token ? '***' : 'undefined',
-        url: chatwootConfig.url
+        accountId: chatwootModel.accountId,
+        token: chatwootModel.token ? '***' : 'undefined',
+        url: chatwootModel.url
       })}`);
 
       const messagesRaw: any[] = [];
@@ -2710,7 +2717,7 @@ export class ChatwootService {
         messagesRaw.filter((msg) => !chatwootImport.isIgnorePhoneNumber(msg.key?.remoteJid)),
       );
 
-      const totalMessagesImported = await chatwootImport.importHistoryMessages(instance, this, inbox, chatwootConfig);
+      const totalMessagesImported = await chatwootImport.importHistoryMessages(instance, this, inbox, chatwootModel);
       
       // Clear Chatwoot cache
       const waInstance = this.waMonitor.waInstances[instance.instanceName];
