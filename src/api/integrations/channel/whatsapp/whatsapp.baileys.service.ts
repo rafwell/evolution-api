@@ -1075,7 +1075,7 @@ export class BaileysStartupService extends ChannelStartupService {
                 await this.client.requestPlaceholderResend(received.key);
                 this.logger.info('Session reestablishment requested successfully');
               } catch (error) {
-                this.logger.error('Failed to reestablish session:', error);
+                this.logger.error('Failed to reestablish session: '+error);
               }
             }
             
